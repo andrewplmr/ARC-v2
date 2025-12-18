@@ -1,0 +1,34 @@
+app:
+  name: "ARC (Automated Reconciliation Core)"
+  owner: "Arc Solutions"
+  logo_path: "templates/logo.png"
+  default_client_folder: "./clients"
+
+matching:
+  fuzzy_threshold: 0.75
+  tolerance_cents: 50
+
+expected_files:
+  bank: ["bank", "bank_statement", "barclays","lloyds","natwest"]
+  ledger: ["ledger","xero","sage","gl","general_ledger"]
+  gateway: ["gateway","stripe","paypal","square","adyen","checkout","payments"]
+
+columns:
+  date_candidates: ["date","transaction_date","posted_date","created_at","trans_date","txn_date"]
+  amount_candidates: ["amount","amt","value","transaction_amount","gross","net","debit","credit"]
+  ref_candidates: ["reference","description","desc","narrative","details","memo","payee"]
+
+excel:
+  output_filename_template: "reconciliation_{client}_{ts}.xlsx"
+  company_header: "ARC"
+  add_logo: true
+  logo_height: 40
+
+smtp:
+  enabled: false
+  host: "smtp.example.com"
+  port: 587
+  username: "you@example.com"
+  password: "CHANGE_ME"
+  use_tls: true
+  default_from: "you@example.com"

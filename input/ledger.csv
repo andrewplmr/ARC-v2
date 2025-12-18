@@ -1,0 +1,5 @@
+date,amount,reference
+01/10/2024,100,John payment
+02/10/2024,49.99,Payout stripe inc
+03/10/2024,-25,Refund 123
+11/05/2025,77,Stripe Payout

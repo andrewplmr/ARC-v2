@@ -1,0 +1,5 @@
+date,amount,reference
+01/10/2024,100,JOHN
+02/10/2024,50,stripe fee payout
+03/10/2024,-25,123 refund
+11/05/2025,77,Stripe Payout

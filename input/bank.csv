@@ -1,0 +1,5 @@
+date,amount,reference
+01/10/2024,100,Payment from John
+02/10/2024,50,Stripe payout
+03/10/2024,-25,Refund order 123
+11/05/2025,77,Stripe Payout
