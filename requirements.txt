@@ -1,6 +1,12 @@
 fastapi
 uvicorn
-python-multipart
 pandas
 openpyxl
-yaml
+streamlit
+python-dateutil
+python-multipart
+PyYAML
+reportlab
+yagmail
+python-magic
+xlsxwriter
