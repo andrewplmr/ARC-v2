@@ -1,9 +1,5 @@
+fastapi
+uvicorn
+python-multipart
 pandas
 openpyxl
-streamlit
-python-dateutil
-PyYAML
-reportlab
-yagmail
-python-magic
-xlsxwriter
