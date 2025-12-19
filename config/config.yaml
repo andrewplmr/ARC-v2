@@ -1,6 +1,6 @@
 app:
   name: "ARC (Automated Reconciliation Core)"
-  owner: "Arc Solutions"
+  owner: "ARC Systems"
   logo_path: "templates/logo.png"
   default_client_folder: "./clients"
 
