@@ -20,7 +20,7 @@ app = FastAPI(title="ARC Reconciliation API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # fine for now
+    allow_origins=["*"],   # OK for now
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -29,7 +29,7 @@ BASE_TMP = "./tmp"
 os.makedirs(BASE_TMP, exist_ok=True)
 
 # -------------------------------------------------
-# PROBE ROUTE (CRITICAL FOR FRAMER / BROWSERS)
+# PROBE ROUTE (REQUIRED FOR FRAMER / BROWSER PREFLIGHT)
 # -------------------------------------------------
 
 @app.get("/reconcile")
@@ -71,7 +71,7 @@ async def reconcile(
         # -------------------------------------------------
         # Load dataframes
         # -------------------------------------------------
-        def load_df(path):
+        def load_df(path: str) -> pd.DataFrame:
             if path.lower().endswith(".csv"):
                 return pd.read_csv(path)
             return pd.read_excel(path)
@@ -81,7 +81,7 @@ async def reconcile(
         gateway_df = load_df(paths["gateway"])
 
         # -------------------------------------------------
-        # Run reconciliation
+        # Run reconciliation engine
         # -------------------------------------------------
         master, rec, fuzzy, unmatched = apply_matching(
             bank_df,
@@ -92,11 +92,8 @@ async def reconcile(
         # -------------------------------------------------
         # Write Excel output
         # -------------------------------------------------
-        output_name = (
-            f"reconciliation_"
-            f"{client_name.replace(' ', '_')}_"
-            f"{run_id}.xlsx"
-        )
+        safe_client = client_name.strip().replace(" ", "_")
+        output_name = f"reconciliation_{safe_client}_{run_id}.xlsx"
         output_path = os.path.join(workdir, output_name)
 
         write_styled_workbook(
@@ -109,7 +106,7 @@ async def reconcile(
         )
 
         # -------------------------------------------------
-        # RETURN FILE (THIS PREVENTS REDIRECT ERRORS)
+        # RETURN FILE (CRITICAL)
         # -------------------------------------------------
         return FileResponse(
             path=output_path,
