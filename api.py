@@ -2,15 +2,13 @@ import os
 import shutil
 import uuid
 from datetime import datetime
-from typing import Optional
 
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# --- your existing engine imports ---
-from engine.utils import load_config, setup_logging, ensure_client_folder, create_run_folder
+# ---- your existing engine imports ----
 from engine.matcher import apply_matching
 from engine.excel_writer import write_styled_workbook
 
@@ -22,30 +20,25 @@ app = FastAPI(title="ARC Reconciliation API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # OK for now
+    allow_origins=["*"],   # fine for now
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-cfg = load_config()
-
 BASE_TMP = "./tmp"
 os.makedirs(BASE_TMP, exist_ok=True)
 
-
 # -------------------------------------------------
-# Safety GET handler (prevents Method Not Allowed page)
+# PROBE ROUTE (CRITICAL FOR FRAMER / BROWSERS)
 # -------------------------------------------------
 
 @app.get("/reconcile")
-def reconcile_get():
-    return {
-        "message": "POST files to this endpoint to run reconciliation."
-    }
-
+@app.head("/reconcile")
+def reconcile_probe():
+    return {"status": "ok"}
 
 # -------------------------------------------------
-# Main POST endpoint (HTML form compatible)
+# MAIN RECONCILIATION ENDPOINT
 # -------------------------------------------------
 
 @app.post("/reconcile")
@@ -64,6 +57,7 @@ async def reconcile(
         # Save uploaded files
         # -------------------------------------------------
         paths = {}
+
         for role, file in {
             "bank": bank,
             "ledger": ledger,
@@ -75,7 +69,7 @@ async def reconcile(
             paths[role] = path
 
         # -------------------------------------------------
-        # Load data
+        # Load dataframes
         # -------------------------------------------------
         def load_df(path):
             if path.lower().endswith(".csv"):
@@ -90,27 +84,36 @@ async def reconcile(
         # Run reconciliation
         # -------------------------------------------------
         master, rec, fuzzy, unmatched = apply_matching(
-            bank_df, ledger_df, gateway_df
+            bank_df,
+            ledger_df,
+            gateway_df
         )
 
         # -------------------------------------------------
         # Write Excel output
         # -------------------------------------------------
-        out_name = f"reconciliation_{client_name.replace(' ', '_')}_{run_id}.xlsx"
-        out_path = os.path.join(workdir, out_name)
+        output_name = (
+            f"reconciliation_"
+            f"{client_name.replace(' ', '_')}_"
+            f"{run_id}.xlsx"
+        )
+        output_path = os.path.join(workdir, output_name)
 
         write_styled_workbook(
-            master, rec, fuzzy, unmatched,
+            master,
+            rec,
+            fuzzy,
+            unmatched,
             client_name,
-            out_path
+            output_path
         )
 
         # -------------------------------------------------
-        # RETURN FILE (THIS IS THE CRITICAL PART)
+        # RETURN FILE (THIS PREVENTS REDIRECT ERRORS)
         # -------------------------------------------------
         return FileResponse(
-            path=out_path,
-            filename=out_name,
+            path=output_path,
+            filename=output_name,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
@@ -119,7 +122,3 @@ async def reconcile(
             status_code=500,
             content={"error": str(e)}
         )
-
-    finally:
-        # optional cleanup can be added later
-        pass
