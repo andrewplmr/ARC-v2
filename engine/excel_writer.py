@@ -1,76 +1,83 @@
+import os
+from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from datetime import datetime
+from openpyxl.utils import get_column_letter
 
-HIDE_COLUMNS = {
-    "ref_norm", "match_key", "amount_pence", "amount_gbp", "currency", "fuzzy_status"
+
+INTERNAL_COLUMNS = {
+    "ref_norm",
+    "match_key",
+    "amount_pence",
+    "currency",
+    "amount_gbp",
 }
 
-STATUS_FILL = {
-    "Matched": PatternFill("solid", "C6EFCE"),
-    "Partially Matched": PatternFill("solid", "FFF2CC"),
-    "Unmatched": PatternFill("solid", "F4CCCC"),
+COLUMN_ORDER = [
+    "Date",
+    "amount",
+    "reference",
+    "source",
+    "Status",
+    "Match Type",
+    "Resolution Status",
+    "Variance (£)",
+    "Match Reason",
+]
+
+
+STATUS_FILLS = {
+    "Matched": PatternFill("solid", start_color="C6EFCE"),
+    "Partially Matched": PatternFill("solid", start_color="FFF2CC"),
+    "Unmatched": PatternFill("solid", start_color="F4CCCC"),
 }
 
-THIN = Border(
-    left=Side(style="thin"),
-    right=Side(style="thin"),
-    top=Side(style="thin"),
-    bottom=Side(style="thin"),
-)
+THIN = Border(*(Side(style="thin") for _ in range(4)))
 
 
-def clean(df):
-    df = df.copy()
-    df.rename(columns={
-        "reference": "Reference",
-        "amount": "Amount (£)",
-        "source": "Source"
-    }, inplace=True)
+def write_table(ws, df, start_row):
+    headers = [c for c in COLUMN_ORDER if c in df.columns]
+    df = df[headers]
 
-    return df[[c for c in df.columns if c not in HIDE_COLUMNS]]
+    for i, h in enumerate(headers, start=2):
+        cell = ws.cell(start_row, i, h)
+        cell.font = Font(bold=True)
+        cell.border = THIN
+
+    for r, row in enumerate(df.itertuples(index=False), start=start_row + 1):
+        for c, val in enumerate(row, start=2):
+            cell = ws.cell(r, c, val)
+            cell.border = THIN
+
+            if headers[c - 2] == "Status":
+                cell.fill = STATUS_FILLS.get(val, None)
+                cell.alignment = Alignment(horizontal="center")
+
+    return start_row + len(df) + 2
 
 
-def write_styled_workbook(summary, matched, partial, unmatched, client, path):
+def write_styled_workbook(master, matched, partial, unmatched, client, out_path):
     wb = Workbook()
     ws = wb.active
-    ws.title = "Reconciliation"
+    ws.title = "Dashboard"
+    ws.sheet_view.showGridLines = False
 
     ws["B1"] = client
     ws["B1"].font = Font(size=20, bold=True)
-    ws["B3"] = f"Generated: {datetime.today().date()}"
 
-    row = 5
+    ws["I1"] = "Automated Reconciliation Core"
+    ws["I1"].alignment = Alignment(horizontal="right")
 
-    def write_table(df, title):
-        nonlocal row
-        ws[f"B{row}"] = title
-        ws[f"B{row}"].font = Font(bold=True)
-        row += 1
+    row = 3
+    row = write_table(ws, matched, row)
+    row = write_table(ws, partial, row)
+    write_table(ws, unmatched, row)
 
-        df = clean(df)
+    ws["B18"] = "Prepared automatically by ARC Solutions"
+    ws["B19"] = f"Generated on: {datetime.today().date()}"
 
-        for i, col in enumerate(df.columns, start=2):
-            cell = ws.cell(row=row, column=i, value=col)
-            cell.font = Font(bold=True)
-            cell.fill = PatternFill("solid", "000000")
-            cell.font = Font(color="FFFFFF")
-            cell.border = THIN
+    for col in range(2, ws.max_column + 1):
+        ws.column_dimensions[get_column_letter(col)].width = 22
 
-        row += 1
-
-        for _, r in df.iterrows():
-            for i, v in enumerate(r, start=2):
-                cell = ws.cell(row=row, column=i, value=v)
-                cell.border = THIN
-                if col := df.columns[i-2] == "Status":
-                    cell.fill = STATUS_FILL.get(v)
-            row += 1
-
-        row += 2
-
-    write_table(matched, "Matched")
-    write_table(partial, "Partially Matched")
-    write_table(unmatched, "Unmatched")
-
-    wb.save(path)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    wb.save(out_path)
