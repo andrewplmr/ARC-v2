@@ -26,7 +26,14 @@ INTERNAL_COLUMNS = {
     "polarity",
     "currency",
     "amount_gbp",
+
+    # Internal reasoning fields
+    "match_type",
+    "resolution_status",
+    "reason_code",
+    "variance_amount",
 }
+
 
 # User-facing column renames
 COLUMN_RENAMES = {
@@ -35,7 +42,9 @@ COLUMN_RENAMES = {
     "date": "Date",
     "amount": "Amount (£)",
     "reference": "Reference",
+    "Match Reason": "Match Reason",
 }
+
 
 # Client-friendly status translations
 CLIENT_STATUS_MAP = {
@@ -301,7 +310,7 @@ def write_dashboard_sheet(
     # --------------------------------------------------------
     total = len(summary_df)
     matched = (summary_df["final_status"] == "Matched").sum()
-    partial = (summary_df["final_status"] == "FuzzyMatched").sum()
+    partial = summary_df["final_status"].isin(["FuzzyMatched"]).sum()
     unmatched = (summary_df["final_status"] == "Unmatched").sum()
     rate = matched / total if total else 0
 
