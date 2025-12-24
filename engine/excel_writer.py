@@ -26,14 +26,7 @@ INTERNAL_COLUMNS = {
     "polarity",
     "currency",
     "amount_gbp",
-
-    # Internal reasoning fields
-    "match_type",
-    "resolution_status",
-    "reason_code",
-    "variance_amount",
 }
-
 
 # User-facing column renames
 COLUMN_RENAMES = {
@@ -42,9 +35,8 @@ COLUMN_RENAMES = {
     "date": "Date",
     "amount": "Amount (£)",
     "reference": "Reference",
-    "Match Reason": "Match Reason",
+    "match_reason": "Match Reason",
 }
-
 
 # Client-friendly status translations
 CLIENT_STATUS_MAP = {
