@@ -28,6 +28,9 @@ def prepare(df, source):
         lambda r: r["amount"] * FX_RATES.get(r["currency"], 1.0), axis=1
     )
     df["amount_pence"] = (df["amount_gbp"] * 100).round().astype(int)
+    # backward compatibility
+    df["amount_cent"] = df["amount_pence"]
+
 
     df["reference"] = df.get("reference", "")
     df["ref_norm"] = df["reference"].apply(normalise_reference)
