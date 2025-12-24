@@ -1,23 +1,42 @@
-from difflib import SequenceMatcher
-import logging
-from engine.utils import load_config
-cfg = load_config()
+import pandas as pd
+from rapidfuzz import fuzz
 
-def score(a, b):
-    return SequenceMatcher(None, a, b).ratio()
+
+FUZZY_THRESHOLD = 92
+
 
 def mark_fuzzy(df):
-    thresh = float(cfg["matching"].get("fuzzy_threshold", 0.75))
-    df["fuzzy_status"] = "NotFuzzy"
-    grouped = df.groupby("amount_cent")
-    for amount, group in grouped:
-        refs = group["ref_norm"].tolist()
-        idxs = group.index.tolist()
-        for i in range(len(refs)):
-            for j in range(i+1, len(refs)):
-                s = score(refs[i], refs[j])
-                if s >= thresh:
-                    df.loc[idxs[i], "fuzzy_status"] = "FuzzyMatched"
-                    df.loc[idxs[j], "fuzzy_status"] = "FuzzyMatched"
-    logging.info("Fuzzy marking complete.")
+    df = df.copy()
+
+    # 🔐 Backwards compatibility
+    if "amount_cent" in df.columns and "amount_pence" not in df.columns:
+        df["amount_pence"] = df["amount_cent"]
+
+    df["fuzzy_group"] = None
+
+    refs = df["ref_norm"].fillna("").tolist()
+
+    for i in range(len(df)):
+        if df.at[i, "fuzzy_group"] is not None:
+            continue
+
+        df.at[i, "fuzzy_group"] = i
+
+        for j in range(i + 1, len(df)):
+            if df.at[j, "fuzzy_group"] is not None:
+                continue
+
+            score = fuzz.ratio(refs[i], refs[j])
+
+            if score >= FUZZY_THRESHOLD:
+                df.at[j, "fuzzy_group"] = i
+
+    # merge fuzzy groups into match_key when needed
+    df["match_key"] = df.apply(
+        lambda r: f"{r['fuzzy_group']}_{r['amount_pence']}"
+        if pd.isna(r.get("match_key"))
+        else r["match_key"],
+        axis=1,
+    )
+
     return df
