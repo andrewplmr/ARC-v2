@@ -3,11 +3,10 @@ from engine.fuzzy import mark_fuzzy
 
 FX_RATES = {"GBP": 1.0, "USD": 0.79, "EUR": 0.86}
 KNOWN_GATEWAYS = ["stripe", "paypal", "square"]
-SMALL_FEE_PENCE = 500
-DATE_TOLERANCE_DAYS = 2
+SMALL_FEE_PENCE = 500  # £5.00
 
 
-def _norm_ref(x):
+def normalise_reference(x):
     if pd.isna(x):
         return ""
     return "".join(c for c in str(x).lower() if c.isalnum())
@@ -17,8 +16,12 @@ def prepare(df, source):
     df = df.copy()
     df["source"] = source
 
-    df["date"] = pd.to_datetime(df.get("date"), errors="coerce").dt.date
-    df["amount"] = pd.to_numeric(df.get("amount"), errors="coerce").fillna(0.0)
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    else:
+        df["date"] = None
+
+    df["amount"] = pd.to_numeric(df.get("amount", 0), errors="coerce").fillna(0.0)
     df["currency"] = df.get("currency", "GBP")
 
     df["amount_gbp"] = df.apply(
@@ -27,59 +30,75 @@ def prepare(df, source):
     df["amount_pence"] = (df["amount_gbp"] * 100).round().astype(int)
 
     df["reference"] = df.get("reference", "")
-    df["ref_norm"] = df["reference"].apply(_norm_ref)
+    df["ref_norm"] = df["reference"].apply(normalise_reference)
 
     return df
 
 
 def make_key(df):
-    df["match_key"] = (
-        df["amount_pence"].astype(str)
-        + "_"
-        + df["ref_norm"]
-        + "_"
-        + df["date"].astype(str)
-    )
+    df["match_key"] = df["ref_norm"] + "_" + df["amount_pence"].astype(str)
     return df
 
 
 def reconcile_group(group):
     sources = set(group["source"])
+    amounts = group["amount_pence"].tolist()
+    ref = group["ref_norm"].iloc[0]
+
     status = "Unmatched"
     match_type = None
     resolution = "exception_unknown"
     variance = None
     reason = "Unmatched transaction – no reliable match detected"
 
-    if sources == {"bank", "ledger", "gateway"}:
-        status = "Matched"
-        match_type = "Exact reference match"
-        resolution = "cleared"
-        reason = "Exact reference match – cleared automatically"
+    if len(sources) >= 2:
+        max_amt = max(amounts)
+        min_amt = min(amounts)
+        diff = abs(max_amt - min_amt)
 
-    elif len(sources) >= 2:
-        status = "Partially Matched"
-        match_type = "Similar reference match"
-        resolution = "cleared"
-        reason = "Similar reference detected – cleared automatically"
-
-    else:
-        amt = group["amount_pence"].iloc[0]
-        ref = group["ref_norm"].iloc[0]
-
-        if amt <= SMALL_FEE_PENCE and any(g in ref for g in KNOWN_GATEWAYS):
+        if diff == 0 and sources == {"Bank", "Ledger", "Gateway"}:
             status = "Matched"
+            match_type = "Exact reference match"
+            resolution = "cleared"
+            reason = "Exact reference match – cleared automatically"
+        else:
+            status = "Partially Matched"
+            match_type = "Reference match with variance"
+            variance = diff / 100
             resolution = "cleared_with_difference"
-            variance = amt / 100
-            reason = f"Likely processing fee – £{variance:.2f} detected"
+            reason = f"Matched by reference; £{variance:.2f} variance detected"
+
+    elif (
+        group["amount_pence"].iloc[0] <= SMALL_FEE_PENCE
+        and any(g in ref for g in KNOWN_GATEWAYS)
+    ):
+        status = "Matched"
+        match_type = "Gateway fee"
+        variance = group["amount_pence"].iloc[0] / 100
+        resolution = "cleared_with_difference"
+        reason = f"Likely processing fee – £{variance:.2f} detected"
 
     return pd.Series({
         "Status": status,
         "Match Type": match_type,
         "Resolution Status": resolution,
         "Variance (£)": variance,
-        "Match Reason": reason
+        "Match Reason": reason,
     })
+
+
+def assign_group_date(master):
+    def pick_date(g):
+        d = g["date"].dropna()
+        return d.iloc[0] if not d.empty else None
+
+    master["Date"] = (
+        master.groupby("match_key")
+        .apply(pick_date)
+        .reindex(master["match_key"])
+        .values
+    )
+    return master
 
 
 def apply_matching(bank_df, ledger_df, gateway_df):
@@ -92,19 +111,14 @@ def apply_matching(bank_df, ledger_df, gateway_df):
 
     master = mark_fuzzy(master)
 
-    recon = (
-        master
-        .groupby("match_key", dropna=False)
+    summary = (
+        master.groupby("match_key", dropna=False)
         .apply(reconcile_group)
         .reset_index()
     )
 
-    master = master.merge(recon, on="match_key", how="left")
-
-    master["Date"] = (
-        master.groupby("match_key")["date"]
-        .transform(lambda x: x.dropna().iloc[0] if not x.dropna().empty else None)
-    )
+    master = master.merge(summary, on="match_key", how="left")
+    master = assign_group_date(master)
 
     return (
         master,
