@@ -1,100 +1,114 @@
-# matcher.py
 import pandas as pd
 from engine.fuzzy import mark_fuzzy
 
 FX_RATES = {"GBP": 1.0, "USD": 0.79, "EUR": 0.86}
-
 KNOWN_GATEWAYS = ["stripe", "paypal", "square"]
-SMALL_FEE_THRESHOLD_PENCE = 500
+SMALL_FEE_PENCE = 500
 DATE_TOLERANCE_DAYS = 2
 
 
-def normalise_reference(x):
+def _norm_ref(x):
     if pd.isna(x):
         return ""
-    return "".join(ch for ch in str(x).lower() if ch.isalnum())
+    return "".join(c for c in str(x).lower() if c.isalnum())
 
 
-def prepare_dataframe(df):
+def prepare(df, source):
     df = df.copy()
+    df["source"] = source
 
     df["date"] = pd.to_datetime(df.get("date"), errors="coerce").dt.date
     df["amount"] = pd.to_numeric(df.get("amount"), errors="coerce").fillna(0.0)
-
-    df["polarity"] = "debit" if df["amount"].mean() < 0 else "credit"
-    df["amount"] = df["amount"].abs()
-
     df["currency"] = df.get("currency", "GBP")
+
     df["amount_gbp"] = df.apply(
         lambda r: r["amount"] * FX_RATES.get(r["currency"], 1.0), axis=1
     )
+    df["amount_pence"] = (df["amount_gbp"] * 100).round().astype(int)
 
-    df["amount_cent"] = (df["amount_gbp"] * 100).round().astype(int)
     df["reference"] = df.get("reference", "")
-    df["ref_norm"] = df["reference"].apply(normalise_reference)
+    df["ref_norm"] = df["reference"].apply(_norm_ref)
 
     return df
 
 
-def make_match_key(df):
+def make_key(df):
     df["match_key"] = (
-        df["amount_cent"].astype(str) + "_" +
-        df["ref_norm"] + "_" +
-        df["date"].astype(str)
+        df["amount_pence"].astype(str)
+        + "_"
+        + df["ref_norm"]
+        + "_"
+        + df["date"].astype(str)
     )
     return df
 
 
-def generate_match_reason(row):
-    if row["final_status"] == "Matched":
-        return "Exact reference match – cleared automatically"
+def reconcile_group(group):
+    sources = set(group["source"])
+    status = "Unmatched"
+    match_type = None
+    resolution = "exception_unknown"
+    variance = None
+    reason = "Unmatched transaction – no reliable match detected"
 
-    if row["final_status"] == "FuzzyMatched":
-        return "Similar reference detected – cleared automatically"
+    if sources == {"bank", "ledger", "gateway"}:
+        status = "Matched"
+        match_type = "Exact reference match"
+        resolution = "cleared"
+        reason = "Exact reference match – cleared automatically"
 
-    if row["variance_amount"]:
-        return f"Likely processing fee – £{row['variance_amount']:.2f} detected"
+    elif len(sources) >= 2:
+        status = "Partially Matched"
+        match_type = "Similar reference match"
+        resolution = "cleared"
+        reason = "Similar reference detected – cleared automatically"
 
-    return "Unmatched transaction – manual review required"
+    else:
+        amt = group["amount_pence"].iloc[0]
+        ref = group["ref_norm"].iloc[0]
+
+        if amt <= SMALL_FEE_PENCE and any(g in ref for g in KNOWN_GATEWAYS):
+            status = "Matched"
+            resolution = "cleared_with_difference"
+            variance = amt / 100
+            reason = f"Likely processing fee – £{variance:.2f} detected"
+
+    return pd.Series({
+        "Status": status,
+        "Match Type": match_type,
+        "Resolution Status": resolution,
+        "Variance (£)": variance,
+        "Match Reason": reason
+    })
 
 
 def apply_matching(bank_df, ledger_df, gateway_df):
-    bank_df["source"] = "bank"
-    ledger_df["source"] = "ledger"
-    gateway_df["source"] = "gateway"
+    bank = prepare(bank_df, "Bank")
+    ledger = prepare(ledger_df, "Ledger")
+    gateway = prepare(gateway_df, "Gateway")
 
-    master = pd.concat([bank_df, ledger_df, gateway_df], ignore_index=True)
-    master = prepare_dataframe(master)
-    master = make_match_key(master)
-
-    grouped = master.groupby("match_key")["source"].apply(set)
-    reconciled_keys = grouped[grouped == {"bank", "ledger", "gateway"}].index
-
-    master["final_status"] = "Unmatched"
-    master.loc[master["match_key"].isin(reconciled_keys), "final_status"] = "Matched"
+    master = pd.concat([bank, ledger, gateway], ignore_index=True)
+    master = make_key(master)
 
     master = mark_fuzzy(master)
-    master.loc[
-        (master["final_status"] == "Unmatched") &
-        (master["fuzzy_status"] == "FuzzyMatched"),
-        "final_status"
-    ] = "FuzzyMatched"
 
-    # ---------- Intelligent reasoning ----------
-    master["variance_amount"] = master.apply(
-        lambda r: r["amount_gbp"]
-        if r["final_status"] == "Unmatched"
-        and r["amount_cent"] <= SMALL_FEE_THRESHOLD_PENCE
-        and any(g in r["ref_norm"] for g in KNOWN_GATEWAYS)
-        else None,
-        axis=1
+    recon = (
+        master
+        .groupby("match_key", dropna=False)
+        .apply(reconcile_group)
+        .reset_index()
     )
 
-    master["match_reason"] = master.apply(generate_match_reason, axis=1)
+    master = master.merge(recon, on="match_key", how="left")
+
+    master["Date"] = (
+        master.groupby("match_key")["date"]
+        .transform(lambda x: x.dropna().iloc[0] if not x.dropna().empty else None)
+    )
 
     return (
         master,
-        master[master["final_status"] == "Matched"],
-        master[master["final_status"] == "FuzzyMatched"],
-        master[master["final_status"] == "Unmatched"],
+        master[master["Status"] == "Matched"],
+        master[master["Status"] == "Partially Matched"],
+        master[master["Status"] == "Unmatched"],
     )
